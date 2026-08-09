@@ -8,17 +8,19 @@ import sys
 import time
 from pathlib import Path
 
-from .ledger import Ledger, find_ledger_dir
+from .ledger import Ledger, claim_hash, find_ledger_dir, normalize_claim
 
 STAMP_RE = re.compile(
     r"\[claimstamp\s+seq=(?P<seq>\d+)\s+id=(?P<id>[0-9a-f]{6,64})\s+"
+    r"claim=(?P<claim>-|[0-9a-f]{12})\s+"
     r"exit=(?P<exit>-?\d+)\s+ts=(?P<ts>[0-9T:Z\-]+)\]"
 )
 
 
 def format_stamp(entry: dict) -> str:
+    claim_field = entry["claim_hash"] or "-"
     return (
-        f"[claimstamp seq={entry['seq']} id={entry['id']} "
+        f"[claimstamp seq={entry['seq']} id={entry['id']} claim={claim_field} "
         f"exit={entry['exit_code']} ts={entry['timestamp']}] $ {entry['command']}"
     )
 
@@ -52,8 +54,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         duration_s=duration,
         stdout=proc.stdout,
         stderr=proc.stderr,
+        claim=args.claim or "",
     )
     print(format_stamp(entry.__dict__), file=sys.stderr)
+    if not args.claim:
+        print(
+            "claimstamp: no --claim given — this stamp proves the command ran but "
+            "isn't bound to any claim text. `audit` will flag it if you paste it "
+            "next to a claim in a report. Prefer: claimstamp run --claim "
+            "'<what this proves>' -- <command>",
+            file=sys.stderr,
+        )
     return proc.returncode
 
 
@@ -86,12 +97,28 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _attached_text(text: str, match: "re.Match") -> str:
+    """Best-effort extraction of the claim sentence a stamp is attached to:
+    the text before the stamp on its own line, or the previous non-blank
+    line if the stamp sits alone on its line."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    before_on_line = text[line_start : match.start()].strip()
+    if before_on_line:
+        return before_on_line
+    prev_text = text[:line_start]
+    for line in reversed(prev_text.splitlines()):
+        stripped = line.strip()
+        if stripped and not STAMP_RE.search(stripped):
+            return stripped
+    return ""
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     text = Path(args.file).read_text(encoding="utf-8")
     stamps = list(STAMP_RE.finditer(text))
     if not stamps:
         print(f"no claimstamp stamps found in {args.file}")
-        return 0 if not args.require else 1
+        return 0 if args.allow_no_stamps else 1
 
     ledger = Ledger.open()
     ok_count = 0
@@ -101,6 +128,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
     for m in stamps:
         claim_id = m.group("id")
         claimed_exit = int(m.group("exit"))
+        stamped_claim_hash = m.group("claim")
         entry = ledger.find_by_id(claim_id)
         if entry is None:
             problems.append(f"FORGED/MISSING: id={claim_id} has no matching ledger entry")
@@ -120,6 +148,30 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if args.max_age is not None and age_s > args.max_age:
             problems.append(
                 f"STALE: id={claim_id} is {int(age_s)}s old, older than --max-age {args.max_age}s"
+            )
+            continue
+        if stamped_claim_hash == "-" or not entry.get("claim_hash"):
+            if not args.allow_unbound:
+                problems.append(
+                    f"UNBOUND: id={claim_id} was recorded with no --claim text, so this "
+                    "stamp only proves *a* command ran, not that it supports the text "
+                    "next to it. Re-run with claimstamp run --claim '<claim>' -- <command>, "
+                    "or pass --allow-unbound to accept execution-only stamps."
+                )
+                continue
+            ok_count += 1
+            continue
+        attached = normalize_claim(_attached_text(text, m))
+        if not attached:
+            problems.append(
+                f"UNBOUND: id={claim_id} has a bound claim but no text was found next to "
+                "the stamp to check it against"
+            )
+            continue
+        if claim_hash(attached) != entry["claim_hash"]:
+            problems.append(
+                f"CLAIM MISMATCH: id={claim_id} was stamped for a different claim than the "
+                f"text it's attached to here ({attached!r})"
             )
             continue
         ok_count += 1
@@ -142,7 +194,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "run",
-        help="run a command, record a tamper-evident stamp of what happened",
+        help="run a command, record a tamper-evident stamp bound to a claim",
+    )
+    sp.add_argument(
+        "--claim",
+        default=None,
+        help="the claim sentence this run supports, e.g. 'all tests pass'. "
+        "Paste it verbatim next to the stamp in your report so `audit` can "
+        "bind them together.",
     )
     sp.add_argument("command", nargs=argparse.REMAINDER)
     sp.set_defaults(func=cmd_run)
@@ -166,9 +225,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="flag stamps older than this many seconds as stale",
     )
     sp.add_argument(
-        "--require",
+        "--allow-no-stamps",
         action="store_true",
-        help="exit nonzero if the file contains no stamps at all",
+        help="don't fail when the file contains zero stamps (default: fail, "
+        "since an unstamped claim is exactly what this tool exists to catch)",
+    )
+    sp.add_argument(
+        "--allow-unbound",
+        action="store_true",
+        help="accept stamps recorded without --claim text as verified (default: "
+        "flag them, since an execution-only stamp doesn't prove it supports the "
+        "claim it's sitting next to)",
     )
     sp.set_defaults(func=cmd_audit)
 

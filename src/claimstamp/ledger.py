@@ -28,6 +28,18 @@ def _sha256_text(text: str) -> str:
     return _sha256_bytes(text.encode("utf-8"))
 
 
+def normalize_claim(text: str) -> str:
+    """Collapse whitespace and strip surrounding punctuation/markup so the same
+    claim sentence hashes the same whether it's typed at `run --claim` time or
+    lifted verbatim into a report next to the stamp."""
+    return " ".join(text.strip().strip("-*>#. \t\"'").split()).lower()
+
+
+def claim_hash(text: str) -> str:
+    normalized = normalize_claim(text)
+    return _sha256_text(normalized)[:12] if normalized else ""
+
+
 def find_ledger_dir(start: Optional[Path] = None) -> Path:
     """Walk up from `start` (default cwd) looking for an existing .claimstamp dir.
 
@@ -54,6 +66,8 @@ class Entry:
     stdout_bytes: int
     stderr_bytes: int
     prev_hash: str
+    claim: str = ""
+    claim_hash: str = ""
     id: str = ""
     hash: str = ""
 
@@ -100,12 +114,14 @@ class Ledger:
         duration_s: float,
         stdout: bytes,
         stderr: bytes,
+        claim: str = "",
         cwd: Optional[str] = None,
     ) -> Entry:
         self.ensure_initialized()
         entries = self._read_entries()
         seq = len(entries) + 1
         prev_hash = entries[-1]["hash"] if entries else GENESIS_HASH
+        normalized_claim = normalize_claim(claim) if claim else ""
         entry = Entry(
             seq=seq,
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -118,6 +134,8 @@ class Ledger:
             stdout_bytes=len(stdout),
             stderr_bytes=len(stderr),
             prev_hash=prev_hash,
+            claim=normalized_claim,
+            claim_hash=claim_hash(claim) if claim else "",
         )
         entry.hash = _sha256_text(entry.canonical())
         entry.id = entry.hash[:8]

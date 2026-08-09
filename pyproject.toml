@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claimstamp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ground an agent's claims in commands it actually ran, not commands it says it ran."
 readme = "README.md"
 requires-python = ">=3.9"

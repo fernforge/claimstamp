@@ -37,21 +37,59 @@ def test_audit_flags_forged_stamp(tmp_path):
     run_cli(["init"], cwd=tmp_path)
     report = tmp_path / "report.md"
     report.write_text(
-        "Done. [claimstamp seq=1 id=deadbeef exit=0 ts=2026-01-01T00:00:00Z] $ pytest\n"
+        "Done. [claimstamp seq=1 id=deadbeef claim=- exit=0 ts=2026-01-01T00:00:00Z] $ pytest\n"
     )
     a = run_cli(["audit", "report.md"], cwd=tmp_path)
     assert a.returncode == 1
     assert "FORGED/MISSING" in a.stdout
 
 
-def test_audit_passes_real_stamp(tmp_path):
+def test_audit_flags_unbound_stamp_by_default(tmp_path):
     r = run_cli(["run", "--", "python3", "-c", "print('ok')"], cwd=tmp_path)
-    claim_id = r.stderr.split("id=")[1].split()[0]
     report = tmp_path / "report.md"
     report.write_text(f"Done. {r.stderr.strip()}\n")
     a = run_cli(["audit", "report.md"], cwd=tmp_path)
+    assert a.returncode == 1
+    assert "UNBOUND" in a.stdout
+
+    a2 = run_cli(["audit", "report.md", "--allow-unbound"], cwd=tmp_path)
+    assert a2.returncode == 0
+    assert "1 verified" in a2.stdout
+
+
+def test_audit_passes_bound_claim_pasted_verbatim(tmp_path):
+    r = run_cli(
+        ["run", "--claim", "all tests pass", "--", "python3", "-c", "print('ok')"],
+        cwd=tmp_path,
+    )
+    report = tmp_path / "report.md"
+    report.write_text(f"All tests pass. {r.stderr.strip()}\n")
+    a = run_cli(["audit", "report.md"], cwd=tmp_path)
     assert a.returncode == 0
     assert "1 verified" in a.stdout
+
+
+def test_audit_flags_stamp_copied_onto_a_different_claim(tmp_path):
+    r = run_cli(
+        ["run", "--claim", "echo works", "--", "python3", "-c", "print('ok')"],
+        cwd=tmp_path,
+    )
+    report = tmp_path / "report.md"
+    report.write_text(f"All tests pass. {r.stderr.strip()}\n")
+    a = run_cli(["audit", "report.md"], cwd=tmp_path)
+    assert a.returncode == 1
+    assert "CLAIM MISMATCH" in a.stdout
+
+
+def test_audit_fails_on_zero_stamps_by_default(tmp_path):
+    run_cli(["init"], cwd=tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("All tests pass, trust me.\n")
+    a = run_cli(["audit", "report.md"], cwd=tmp_path)
+    assert a.returncode == 1
+
+    a2 = run_cli(["audit", "report.md", "--allow-no-stamps"], cwd=tmp_path)
+    assert a2.returncode == 0
 
 
 def test_chain_breaks_on_tamper(tmp_path):
