@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claimstamp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Ground an agent's claims in commands it actually ran, not commands it says it ran."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -23,8 +23,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/fernforgehq/claimstamp"
-Repository = "https://github.com/fernforgehq/claimstamp"
+Homepage = "https://github.com/fernforge/claimstamp"
+Repository = "https://github.com/fernforge/claimstamp"
 
 [project.scripts]
 claimstamp = "claimstamp.cli:main"
