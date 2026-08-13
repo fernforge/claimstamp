@@ -1,5 +1,8 @@
 # claimstamp
 
+[![test](https://github.com/fernforge/claimstamp/actions/workflows/test.yml/badge.svg)](https://github.com/fernforge/claimstamp/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/claimstamp.svg)](https://pypi.org/project/claimstamp/)
+
 An agent says "tests pass" and there's no way to tell whether it ran the
 tests or just wrote that sentence. claimstamp closes that gap: it wraps a
 command, records what actually happened, and gives you a short stamp bound
